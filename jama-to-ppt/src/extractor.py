@@ -1,8 +1,10 @@
 """
 Content Extraction Module with Smart Limits and Regex
+Enhanced to parse JAMA's structured citation_abstract meta tag
 """
 
 import re
+import html
 from datetime import datetime
 from typing import Dict, Optional, List
 from bs4 import BeautifulSoup
@@ -16,6 +18,7 @@ class ContentExtractor:
     def __init__(self, soup: BeautifulSoup, verbose: bool = False):
         self.soup = soup
         self.verbose = verbose
+        self._structured_abstract = None  # Cache for parsed abstract
 
     def extract_all(self) -> Dict[str, str]:
         """Extract all required fields from article"""
@@ -174,8 +177,43 @@ class ContentExtractor:
         doi = re.sub(r'https?://doi\.org/', '', doi)
         return doi.strip()
 
+    def _get_structured_abstract(self) -> Dict[str, str]:
+        """Parse JAMA's structured abstract from citation_abstract meta tag"""
+        if self._structured_abstract is not None:
+            return self._structured_abstract
+
+        # Try to get from meta tag first (JAMA specific)
+        meta_abstract = self.soup.find('meta', attrs={'name': 'citation_abstract'})
+        if meta_abstract:
+            abstract_html = html.unescape(meta_abstract.get('content', ''))
+            # Parse the HTML content
+            abstract_soup = BeautifulSoup(abstract_html, 'html.parser')
+
+            sections = {}
+            current_section = None
+
+            for elem in abstract_soup.find_all(['h3', 'p']):
+                if elem.name == 'h3':
+                    current_section = elem.get_text(strip=True)
+                    sections[current_section] = ""
+                elif elem.name == 'p' and current_section:
+                    sections[current_section] = elem.get_text(separator=' ', strip=True)
+
+            self._structured_abstract = sections
+            return sections
+
+        # Fallback to regular abstract parsing
+        self._structured_abstract = {}
+        return {}
+
     def _get_abstract_text(self) -> str:
         """Extract full abstract text"""
+        # First try structured abstract
+        structured = self._get_structured_abstract()
+        if structured:
+            return ' '.join(structured.values())
+
+        # Fallback to DOM selectors
         abstract_selectors = [
             'div.abstract',
             'section.abstract',
@@ -193,9 +231,35 @@ class ContentExtractor:
 
     def _extract_population(self) -> str:
         """Extract population/participants info (MAX 15 words)"""
-        abstract = self._get_abstract_text()
+        # Try structured abstract first
+        structured = self._get_structured_abstract()
 
-        # Look for participant/population patterns
+        # JAMA uses "Participants" or "Design, Setting, and Participants"
+        for key in ['Participants', 'Design, Setting, and Participants', 'Population']:
+            if key in structured:
+                text = structured[key]
+                # Extract key info about participants
+                # Look for patient count, age, condition
+                patterns = [
+                    r'(\d+\s+(?:participants?|patients?|individuals?|subjects?)[^.;]+?(?:age|years|COVID|ARDS|with|mean)[^.;]+)',
+                    r'(Patients? with [^.;]+)',
+                    r'(\d+\s+(?:participants?|patients?)[^.;]+)'
+                ]
+
+                for pattern in patterns:
+                    match = re.search(pattern, text, re.IGNORECASE)
+                    if match:
+                        extracted = match.group(1).strip()
+                        # Clean up trailing words
+                        extracted = re.sub(r'\s+(?:according to|enrolled from|Final).*$', '', extracted, flags=re.IGNORECASE)
+                        return self._limit_words(extracted, 15)
+
+                # Otherwise return first sentence
+                first_sentence = text.split('.')[0]
+                return self._limit_words(first_sentence, 15)
+
+        # Fallback to regex patterns
+        abstract = self._get_abstract_text()
         patterns = [
             r'(?:Participants?|Population|Patients?)[:.\s]+([^.]+?)(?:\.|Intervention|Setting|Methods)',
             r'(\d+\s+(?:participants?|patients?|individuals?|subjects?)(?:[^.]+?)(?:aged?|mean age|median age)[^.]+)',
@@ -208,17 +272,22 @@ class ContentExtractor:
                 text = match.group(1).strip()
                 return self._limit_words(text, 15)
 
-        # Fallback: Look for first mention of participants
-        match = re.search(r'(\d+\s+(?:participants?|patients?)[^.]+)', abstract, re.IGNORECASE)
-        if match:
-            return self._limit_words(match.group(1), 15)
-
         return "Population data not found"
 
     def _extract_intervention(self) -> str:
         """Extract intervention info (MAX 15 words)"""
-        abstract = self._get_abstract_text()
+        # Try structured abstract first
+        structured = self._get_structured_abstract()
 
+        for key in ['Interventions', 'Intervention', 'Exposures']:
+            if key in structured:
+                text = structured[key]
+                # Return first sentence
+                first_sentence = text.split('.')[0]
+                return self._limit_words(first_sentence, 15)
+
+        # Fallback to regex
+        abstract = self._get_abstract_text()
         patterns = [
             r'Intervention[:.\s]+([^.]+?)(?:\.|Main Outcomes?|Results?|Setting)',
             r'(?:received|underwent|assigned to|randomized to)\s+([^.]+?)(?:\.|;|compared)',
@@ -235,8 +304,23 @@ class ContentExtractor:
 
     def _extract_setting(self) -> str:
         """Extract setting info (MAX 10 words)"""
-        abstract = self._get_abstract_text()
+        # Try structured abstract first
+        structured = self._get_structured_abstract()
 
+        for key in ['Setting', 'Design, Setting, and Participants']:
+            if key in structured:
+                text = structured[key]
+                # Extract setting info (usually first part or mentions location)
+                # Look for location patterns
+                match = re.search(r'(?:conducted|performed|carried out|in)\s+(.+?)(?:\.|;|Participants)', text, re.IGNORECASE)
+                if match:
+                    return self._limit_words(match.group(1), 10)
+                # Or get first sentence
+                first_sentence = text.split('.')[0]
+                return self._limit_words(first_sentence, 10)
+
+        # Fallback to regex
+        abstract = self._get_abstract_text()
         patterns = [
             r'Setting[:.\s]+([^.]+?)(?:\.|Participants?|Methods?)',
             r'(?:conducted|performed|carried out)\s+(?:at|in)\s+([^.]+?)(?:\.|;)',
@@ -253,8 +337,18 @@ class ContentExtractor:
 
     def _extract_primary_outcome(self) -> str:
         """Extract primary outcome (MAX 20 words)"""
-        abstract = self._get_abstract_text()
+        # Try structured abstract first
+        structured = self._get_structured_abstract()
 
+        for key in ['Main Outcomes and Measures', 'Primary Outcome', 'Primary Endpoint', 'Main Outcome Measures']:
+            if key in structured:
+                text = structured[key]
+                # Get first sentence or primary outcome description
+                first_sentence = text.split('.')[0]
+                return self._limit_words(first_sentence, 20)
+
+        # Fallback to regex
+        abstract = self._get_abstract_text()
         patterns = [
             r'(?:Main Outcomes? and Measures?|Primary Outcome|Primary Endpoint)[:.\s]+([^.]+?)(?:\.|Results?)',
             r'(?:measured|assessed|evaluated)\s+([^.]+?mortality|[^.]+?survival|[^.]+?incidence)',
@@ -271,22 +365,21 @@ class ContentExtractor:
 
     def _extract_finding(self, number: int) -> str:
         """Extract key findings (MAX 15 words each)"""
-        abstract = self._get_abstract_text()
+        # Try structured abstract first
+        structured = self._get_structured_abstract()
 
-        # Look for Results section
-        results_match = re.search(r'Results?[:.\s]+(.+?)(?:Conclusions?|Discussion|$)', abstract, re.IGNORECASE | re.DOTALL)
-
-        if results_match:
-            results_text = results_match.group(1)
+        if 'Results' in structured:
+            results_text = structured['Results']
 
             # Split into sentences
-            sentences = re.split(r'[.;]\s+', results_text)
+            sentences = re.split(r'\.(?:\s+|\s*$)', results_text)
+            sentences = [s.strip() for s in sentences if s.strip()]
 
             # Look for sentences with numerical data
             findings = []
             for sentence in sentences:
-                # Prioritize sentences with percentages, p-values, or numbers
-                if re.search(r'\d+\.?\d*%|\bp\s*[<>=]\s*0\.\d+|\bn\s*=\s*\d+|OR\s*=|HR\s*=|RR\s*=', sentence, re.IGNORECASE):
+                # Prioritize sentences with percentages, p-values, CI, or numbers
+                if re.search(r'\d+\.?\d*%|\bp\s*[<>=]\s*0\.\d+|\bn\s*=\s*\d+|95%\s*CI|OR\s*=|HR\s*=|RR\s*=|\d+\s+days', sentence, re.IGNORECASE):
                     findings.append(sentence.strip())
 
             # If we have enough findings with numbers, use them
@@ -294,6 +387,26 @@ class ContentExtractor:
                 return self._limit_words(findings[number - 1], 15)
 
             # Otherwise use first N sentences from results
+            if len(sentences) >= number:
+                return self._limit_words(sentences[number - 1], 15)
+
+        # Fallback to regex parsing
+        abstract = self._get_abstract_text()
+        results_match = re.search(r'Results?[:.\s]+(.+?)(?:Conclusions?|Discussion|$)', abstract, re.IGNORECASE | re.DOTALL)
+
+        if results_match:
+            results_text = results_match.group(1)
+            sentences = re.split(r'[.;]\s+', results_text)
+
+            # Look for sentences with numerical data
+            findings = []
+            for sentence in sentences:
+                if re.search(r'\d+\.?\d*%|\bp\s*[<>=]\s*0\.\d+|\bn\s*=\s*\d+|OR\s*=|HR\s*=|RR\s*=', sentence, re.IGNORECASE):
+                    findings.append(sentence.strip())
+
+            if len(findings) >= number:
+                return self._limit_words(findings[number - 1], 15)
+
             if len(sentences) >= number:
                 return self._limit_words(sentences[number - 1], 15)
 
