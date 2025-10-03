@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent / 'src'))
 from scraper import JAMAScraper
 from extractor import ContentExtractor
 from ppt_generator import VAPowerPointGenerator
-from ppt_generator_jama_open import JAMAOpenPowerPointGenerator
+from ppt_generator_jama_oncology import JAMAOncologyPowerPointGenerator
 from utils import IconSelector, sanitize_filename
 
 
@@ -63,9 +63,9 @@ Examples:
 
     parser.add_argument(
         '--format',
-        choices=['va', 'jama-open'],
-        default='jama-open',
-        help='PowerPoint format (default: jama-open)'
+        choices=['va', 'jama-oncology'],
+        default='jama-oncology',
+        help='PowerPoint format (default: jama-oncology - GREEN theme)'
     )
 
     args = parser.parse_args()
@@ -82,7 +82,7 @@ Examples:
         sys.exit(1)
 
     print("=" * 60)
-    print("🎯 JAMA → PowerPoint Dönüştürücü (VA Format)")
+    print("🎯 JAMA → PowerPoint Dönüştürücü (JAMA Oncology - YEŞİL TEMA)")
     print("=" * 60)
     print()
 
@@ -132,9 +132,9 @@ Examples:
         if output_dir and not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-        # Generate presentation
-        if args.format == 'jama-open':
-            generator = JAMAOpenPowerPointGenerator(article_data, icon_type, verbose=args.verbose)
+        # Generate presentation - SADECE YEŞİL TEMA (JAMA Oncology)
+        if args.format == 'jama-oncology':
+            generator = JAMAOncologyPowerPointGenerator(article_data, icon_type, verbose=args.verbose)
         else:
             generator = VAPowerPointGenerator(article_data, icon_type, verbose=args.verbose)
 
