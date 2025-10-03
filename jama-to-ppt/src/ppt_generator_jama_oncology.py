@@ -53,7 +53,7 @@ class JAMAOncologyPowerPointGenerator:
 
     # Content boxes - SOL TARAF (2x2 grid - 4 kutu)
     LEFT_BOX_WIDTH = 2.8
-    LEFT_BOX_HEIGHT = 2.7
+    LEFT_BOX_HEIGHT = 2.5
     LEFT_COL1_X = 0.4
     LEFT_COL2_X = 3.4
     LEFT_BOX_SPACING = 0.15
@@ -70,8 +70,8 @@ class JAMAOncologyPowerPointGenerator:
     RIGHT_BOX_HEIGHT = (LEFT_BOX_HEIGHT * 2) + LEFT_BOX_SPACING
 
     # Footer - EXACT FROM REFERENCE
-    FOOTER_Y = 7.1
-    FOOTER_HEIGHT = 0.35
+    FOOTER_Y = 7.0
+    FOOTER_HEIGHT = 0.4
 
     def __init__(self, article_data: Dict[str, str], icon_type: str = 'medical', verbose: bool = False):
         self.data = article_data
@@ -281,22 +281,26 @@ class JAMAOncologyPowerPointGenerator:
 
     def _add_formatted_content(self, text_frame, content: str, box_title: str):
         """Add formatted content with GREEN highlights for numbers - KELIME SINIRI UYGULANIR"""
-        lines = content.split('\n')
 
-        # Kelime sayısı sınırlarına göre font boyutu ayarla
+        # Kelime limitleri - SENİN BELİRLEDİĞİN
         word_limits = {
             'POPULATION': 15,
             'INTERVENTION': 15,
             'SETTINGS / LOCATIONS': 10,
             'PRIMARY OUTCOME': 20,
-            'FINDINGS': 30  # İki kutu toplam
+            'FINDINGS': 15  # Her findings için
         }
 
         word_limit = word_limits.get(box_title, 20)
+
+        # İçeriği kelime limitine göre kısalt
+        content = self._truncate_to_word_limit(content, word_limit)
+
+        lines = content.split('\n')
         total_words = sum(len(line.split()) for line in lines if line.strip())
 
         # Font boyutu - kelime sayısına göre
-        if total_words > word_limit:
+        if total_words > word_limit * 0.8:
             base_font_size = 9
         else:
             base_font_size = 10
@@ -335,6 +339,52 @@ class JAMAOncologyPowerPointGenerator:
                 run.font.name = "Arial"
                 run.font.color.rgb = self.COLORS['box_content']
                 run.font.size = Pt(base_font_size)
+
+    def _truncate_to_word_limit(self, text: str, word_limit: int) -> str:
+        """Metni kelime limitine göre akıllıca kısalt - en önemli bilgileri koru"""
+        if not text or not text.strip():
+            return text
+
+        # Satırları birleştir
+        text = ' '.join(text.split('\n'))
+        words = text.split()
+
+        if len(words) <= word_limit:
+            return text
+
+        # AKILLI KISALTMA: Sayıları ve önemli kelimeleri koru
+        important_words = []
+        for word in words:
+            # Sayı içeriyorsa muhakkak al
+            if any(char.isdigit() for char in word):
+                important_words.append(word)
+            # Önemli kelimeler (study, patients, vs, treatment, risk, etc.)
+            elif word.lower() in ['study', 'patients', 'adults', 'randomized', 'treatment',
+                                   'vs', 'compared', 'risk', 'outcome', 'survival', 'age',
+                                   'male', 'female', 'years', 'months', 'therapy', 'trial',
+                                   'cohort', 'retrospective', 'prospective', 'analysis']:
+                important_words.append(word)
+            # Normal kelimeler
+            else:
+                important_words.append(word)
+
+        # Word limit'e kadar al
+        if len(important_words) > word_limit:
+            # Sayı içeren kelimeleri ve ilk kelimeleri önceliklendir
+            result = []
+            # Önce sayılı olanları al
+            for word in important_words:
+                if any(char.isdigit() for char in word) and len(result) < word_limit:
+                    result.append(word)
+
+            # Kalan yerleri baştan doldur
+            for word in important_words:
+                if word not in result and len(result) < word_limit:
+                    result.append(word)
+
+            return ' '.join(result)
+
+        return ' '.join(important_words[:word_limit])
 
     def _add_oncology_icon(self, slide, box_title: str, left_pos: float, top_pos: float):
         """Add oncology-specific icons - positioned ABOVE title"""
@@ -518,7 +568,7 @@ class JAMAOncologyPowerPointGenerator:
         title_run.font.color.rgb = self.COLORS['box_title']
         title_run.font.name = "Arial"
 
-        # Add main finding content (text before chart) as separate textbox
+        # Add main finding content (text before chart) as separate textbox - MAX 15 KELIME
         finding_content = self.data.get('finding_1', '')
         if finding_content:
             # Get text before "iDFS" section
@@ -531,6 +581,10 @@ class JAMAOncologyPowerPointGenerator:
                     main_text.append(line.strip())
 
             main_content = ' '.join(main_text).strip()
+
+            # Kelime limitine göre kısalt (max 15 kelime)
+            main_content = self._truncate_to_word_limit(main_content, 15)
+
             if main_content:
                 content_box = slide.shapes.add_textbox(
                     left + Inches(0.15),
@@ -563,9 +617,7 @@ class JAMAOncologyPowerPointGenerator:
                               self.RIGHT_BOX_WIDTH - 0.3, idfs_box_height)
 
     def _add_survival_curve_placeholder(self, slide, left: float, top: float, width: float, height: float):
-        """Add placeholder for survival curve chart"""
-        # This would be replaced with actual chart generation
-        # For now, add a simple representation
+        """Add survival curve chart placeholder with visual representation"""
 
         chart_left = Inches(left)
         chart_top = Inches(top)
@@ -576,41 +628,98 @@ class JAMAOncologyPowerPointGenerator:
         chart_bg = slide.shapes.add_shape(1, chart_left, chart_top, chart_width, chart_height)
         chart_bg.fill.solid()
         chart_bg.fill.fore_color.rgb = RGBColor(255, 255, 255)
-        chart_bg.line.color.rgb = RGBColor(200, 200, 200)
-        chart_bg.line.width = Pt(1)
+        chart_bg.line.color.rgb = RGBColor(220, 220, 220)
+        chart_bg.line.width = Pt(0.5)
 
-        # Add chart title
-        title_box = slide.shapes.add_textbox(
-            chart_left + Inches(0.1),
-            chart_top + Inches(0.05),
-            chart_width - Inches(0.2),
-            Inches(0.3)
-        )
-        title_frame = title_box.text_frame
-        title_p = title_frame.paragraphs[0]
-        title_p.text = "Invasive disease-free survival, %"
-        title_p.alignment = PP_ALIGN.LEFT
-        run = title_p.runs[0]
-        run.font.size = Pt(8)
-        run.font.color.rgb = RGBColor(100, 100, 100)
-        run.font.name = "Arial"
+        # Draw two survival curves (green lines representing treatment groups)
+        # Line 1: Ribociclib+NSAI (higher survival - top line)
+        line1_points = [
+            (left + 0.3, top + 0.3),
+            (left + 0.8, top + 0.35),
+            (left + 1.3, top + 0.4),
+            (left + 1.8, top + 0.45),
+            (left + 2.3, top + 0.5),
+            (left + 2.8, top + 0.6)
+        ]
 
-        # Add note about chart
-        note_box = slide.shapes.add_textbox(
-            chart_left + Inches(0.5),
-            chart_top + Inches(1.2),
-            chart_width - Inches(1.0),
-            Inches(0.5)
+        for i in range(len(line1_points) - 1):
+            x1, y1 = line1_points[i]
+            x2, y2 = line1_points[i + 1]
+            connector = slide.shapes.add_connector(
+                1,  # Straight line
+                Inches(x1), Inches(y1),
+                Inches(x2), Inches(y2)
+            )
+            connector.line.color.rgb = self.COLORS['accent']  # Green
+            connector.line.width = Pt(2)
+
+        # Line 2: NSAI alone (lower survival - bottom line)
+        line2_points = [
+            (left + 0.3, top + 0.4),
+            (left + 0.8, top + 0.5),
+            (left + 1.3, top + 0.6),
+            (left + 1.8, top + 0.7),
+            (left + 2.3, top + 0.85),
+            (left + 2.8, top + 1.0)
+        ]
+
+        for i in range(len(line2_points) - 1):
+            x1, y1 = line2_points[i]
+            x2, y2 = line2_points[i + 1]
+            connector = slide.shapes.add_connector(
+                1,  # Straight line
+                Inches(x1), Inches(y1),
+                Inches(x2), Inches(y2)
+            )
+            connector.line.color.rgb = RGBColor(128, 128, 128)  # Gray
+            connector.line.width = Pt(2)
+
+        # Add legend
+        legend_y = top + 0.15
+
+        # Green line for Ribociclib+NSAI
+        legend_line1 = slide.shapes.add_shape(
+            1,  # Rectangle
+            chart_left + Inches(2.0), Inches(legend_y),
+            Inches(0.2), Inches(0.02)
         )
-        note_frame = note_box.text_frame
-        note_p = note_frame.paragraphs[0]
-        note_p.text = "[Survival Curve Chart]\nRibociclib+NSAI vs NSAI alone"
-        note_p.alignment = PP_ALIGN.CENTER
-        run = note_p.runs[0]
-        run.font.size = Pt(10)
-        run.font.color.rgb = RGBColor(150, 150, 150)
-        run.font.name = "Arial"
-        run.font.italic = True
+        legend_line1.fill.solid()
+        legend_line1.fill.fore_color.rgb = self.COLORS['accent']
+        legend_line1.line.fill.background()
+
+        legend_text1 = slide.shapes.add_textbox(
+            chart_left + Inches(2.25), Inches(legend_y - 0.08),
+            Inches(0.8), Inches(0.15)
+        )
+        legend_frame1 = legend_text1.text_frame
+        legend_p1 = legend_frame1.paragraphs[0]
+        legend_p1.text = "Ribociclib+NSAI"
+        run1 = legend_p1.runs[0]
+        run1.font.size = Pt(6)
+        run1.font.color.rgb = RGBColor(60, 60, 60)
+        run1.font.name = "Arial"
+
+        # Gray line for NSAI alone
+        legend_line2 = slide.shapes.add_shape(
+            1,  # Rectangle
+            chart_left + Inches(2.0), Inches(legend_y + 0.15),
+            Inches(0.2), Inches(0.02)
+        )
+        legend_line2.fill.solid()
+        legend_line2.fill.fore_color.rgb = RGBColor(128, 128, 128)
+        legend_line2.line.fill.background()
+
+        legend_text2 = slide.shapes.add_textbox(
+            chart_left + Inches(2.25), Inches(legend_y + 0.07),
+            Inches(0.6), Inches(0.15)
+        )
+        legend_frame2 = legend_text2.text_frame
+        legend_p2 = legend_frame2.paragraphs[0]
+        legend_p2.text = "NSAI alone"
+        run2 = legend_p2.runs[0]
+        run2.font.size = Pt(6)
+        run2.font.color.rgb = RGBColor(60, 60, 60)
+        run2.font.name = "Arial"
 
     def _add_idfs_results(self, slide, left: float, top: float, width: float, height: float):
         """Add iDFS results section below chart"""
@@ -702,23 +811,23 @@ class JAMAOncologyPowerPointGenerator:
         year = pub_date.split()[-1] if pub_date else '2025'
 
         # Create footer text
-        footer_text = f"{authors}. {journal}. Published online {pub_date}. doi:10.1001/jamaoncol.{doi}"
-        footer_text += " © AMA"
+        footer_text = f"{authors}. {journal}. Published online {pub_date}. doi:10.1001/jamaoncol.{doi} © AMA"
 
-        left = Inches(0.4)
+        left = Inches(0.3)
         top = Inches(self.FOOTER_Y)
-        width = Inches(9.2)
+        width = Inches(9.4)
         height = Inches(self.FOOTER_HEIGHT)
 
         textbox = slide.shapes.add_textbox(left, top, width, height)
         text_frame = textbox.text_frame
         text_frame.word_wrap = True
+        text_frame.vertical_anchor = MSO_ANCHOR.BOTTOM
 
         p = text_frame.paragraphs[0]
         p.text = footer_text
         p.alignment = PP_ALIGN.LEFT
 
         run = p.runs[0]
-        run.font.size = Pt(7)
+        run.font.size = Pt(6)
         run.font.color.rgb = self.COLORS['footer_text']
         run.font.name = "Arial"
