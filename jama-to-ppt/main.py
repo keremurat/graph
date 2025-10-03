@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent / 'src'))
 from scraper import JAMAScraper
 from extractor import ContentExtractor
 from ppt_generator import VAPowerPointGenerator
+from ppt_generator_jama_open import JAMAOpenPowerPointGenerator
 from utils import IconSelector, sanitize_filename
 
 
@@ -58,6 +59,13 @@ Examples:
         '--api-key',
         help='Anthropic API key for AI features',
         default=None
+    )
+
+    parser.add_argument(
+        '--format',
+        choices=['va', 'jama-open'],
+        default='jama-open',
+        help='PowerPoint format (default: jama-open)'
     )
 
     args = parser.parse_args()
@@ -125,7 +133,11 @@ Examples:
             os.makedirs(output_dir)
 
         # Generate presentation
-        generator = VAPowerPointGenerator(article_data, icon_type, verbose=args.verbose)
+        if args.format == 'jama-open':
+            generator = JAMAOpenPowerPointGenerator(article_data, icon_type, verbose=args.verbose)
+        else:
+            generator = VAPowerPointGenerator(article_data, icon_type, verbose=args.verbose)
+
         generator.generate(output_path)
         print()
 
@@ -134,7 +146,7 @@ Examples:
         print("✨ İşlem Tamamlandı!")
         print("=" * 60)
         print(f"📁 Dosya: {output_path}")
-        print(f"🎨 İkon: {icon_type}")
+        print(f"🎨 Format: {args.format}")
         print(f"🔧 Yöntem: {scraper.successful_method}")
         print()
 

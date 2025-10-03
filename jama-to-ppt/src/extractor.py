@@ -112,7 +112,7 @@ class ContentExtractor:
         ]
 
         for selector in date_selectors:
-            if 'meta' in selector:
+            if 'meta' in selector and '[name="' in selector:
                 element = self.soup.find('meta', attrs={'name': selector.split('[name="')[1].rstrip('"]')})
                 if element:
                     date_str = element.get('content')
